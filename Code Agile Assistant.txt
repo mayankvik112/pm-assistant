@@ -1,0 +1,753 @@
+Prompt: 
+
+Write a code with adk multi agent for Agile Project management assistant. Its takes input project description and then generate epic title and user story. It asks for human in loop to validate output. If human says its not satisfied with output, assistant will ask for feeback and improve the results
+
+Output
+
+from google.adk.agents import LlmAgent, SequentialAgent
+from google.adk.tools import agent_tool
+
+# Epic Generator Agent - generates epic title from project description
+epic_agent = LlmAgent(
+    name="EpicGenerator",
+    model="gemini-2.0-flash",
+    description="Generate a concise and clear epic title from the project description.",
+    instruction=(
+        "You are an Agile assistant. Given a project description, generate a concise, "
+        "clear, and compelling epic title."
+    )
+)
+
+# User Story Generator Agent - generates user stories from epic title and optional feedback
+user_story_agent = LlmAgent(
+    name="UserStoryGenerator",
+    model="gemini-2.0-flash",
+    description="Generate user stories based on the epic title and optional feedback.",
+    instruction=(
+        "You are an Agile assistant. Given an epic title and optional user feedback, "
+        "generate detailed user stories in the format: "
+        "\"As a [role], I want [feature] so that [benefit].\" "
+        "Incorporate any feedback provided to improve the user stories."
+    )
+)
+
+# Validation Agent - asks the human for validation and feedback
+validation_agent = LlmAgent(
+    name="ValidationAgent",
+    model="gemini-2.0-flash",
+    description=(
+        "Present the epic and user stories to the user. Ask if they are satisfied. "
+        "If not, ask for specific feedback to improve the output."
+    ),
+    instruction=(
+        "Present the following epic and user stories to the user:\n"
+        "{epic}\n\n{stories}\n\n"
+        "Are you satisfied with this output? Please answer 'yes' or 'no'. "
+        "If 'no', please provide specific feedback for improvement."
+    )
+)
+
+# The main assistant agent that orchestrates the workflow
+class AgileProjectAssistant(SequentialAgent):
+    def __init__(self, name):
+        super().__init__(name=name, sub_agents=[epic_agent, user_story_agent, validation_agent])
+        self.project_description = None
+        self.epic_title = None
+        self.user_stories = None
+
+    async def run(self, input_text):
+        self.project_description = input_text
+
+        # Step 1: Generate Epic Title
+        self.epic_title = await epic_agent.run(self.project_description)
+
+        # Step 2: Generate User Stories (initially no feedback)
+        self.user_stories = await user_story_agent.run(f"Epic: {self.epic_title}\nFeedback: None")
+
+        while True:
+            # Step 3: Ask for Validation and Feedback
+            validation_prompt = (
+                f"Epic Title:\n{self.epic_title}\n\n"
+                f"User Stories:\n{self.user_stories}\n\n"
+                "Are you satisfied with this output? Please answer 'yes' or 'no'. "
+                "If 'no', please provide specific feedback."
+            )
+            validation_response = await validation_agent.run(validation_prompt)
+
+            # Parse human response
+            response_lower = validation_response.lower()
+            if "yes" in response_lower:
+                # Approved by human
+                return {
+                    "epic_title": self.epic_title,
+                    "user_stories": self.user_stories,
+                    "validation": "Approved by human"
+                }
+            else:
+                # Extract feedback from response (everything after 'no')
+                # Simple heuristic: remove 'no' and strip whitespace
+                feedback = validation_response.lower().replace("no", "", 1).strip()
+                if not feedback:
+                    feedback = "No specific feedback provided."
+
+                # Regenerate user stories with feedback
+                user_story_input = f"Epic: {self.epic_title}\nFeedback: {feedback}"
+                self.user_stories = await user_story_agent.run(user_story_input)
+
+                # Optionally, you could also regenerate epic title based on feedback:
+                # self.epic_title = await epic_agent.run(f"{self.project_description}\nFeedback: {feedback}")
+
+# Example usage
+async def main():
+    assistant = AgileProjectAssistant(name="AgileProjectAssistant")
+    project_desc = "Develop a mobile app for fitness tracking with social sharing features."
+    result = await assistant.run(project_desc)
+    print("Final Output:")
+    print("Epic Title:", result["epic_title"])
+    print("User Stories:", result["user_stories"])
+    print("Validation Status:", result["validation"])
+
+# To run the example, use an async event loop like asyncio
+# import asyncio
+# asyncio.run(main())
+
+Prompt :
+
+Ok, great. Improve the above code. After geenertig user story,you need to determine dependency b/w user story and create a schedule of excution of user story in different iteration of PI.
+Ok, great. Improve the above code. After geenertig user story,you need to determine dependency b/w user story and create a schedule of excution of user story in different iteration of PI.
+
+Output:
+
+from google.adk.agents import LlmAgent, SequentialAgent
+
+# Epic Generator Agent
+epic_agent = LlmAgent(
+    name="EpicGenerator",
+    model="gemini-2.0-flash",
+    description="Generate a concise and clear epic title from the project description.",
+    instruction=(
+        "You are an Agile assistant. Given a project description, generate a concise, "
+        "clear, and compelling epic title."
+    )
+)
+
+# User Story Generator Agent
+user_story_agent = LlmAgent(
+    name="UserStoryGenerator",
+    model="gemini-2.0-flash",
+    description="Generate user stories based on the epic title and optional feedback.",
+    instruction=(
+        "You are an Agile assistant. Given an epic title and optional user feedback, "
+        "generate detailed user stories in the format: "
+        "\"As a [role], I want [feature] so that [benefit].\" "
+        "Incorporate any feedback provided to improve the user stories."
+    )
+)
+
+# Validation Agent for human-in-the-loop
+validation_agent = LlmAgent(
+    name="ValidationAgent",
+    model="gemini-2.0-flash",
+    description=(
+        "Present the epic and user stories to the user. Ask if they are satisfied. "
+        "If not, ask for specific feedback to improve the output."
+    ),
+    instruction=(
+        "Present the following epic and user stories to the user:\n"
+        "{epic}\n\n{stories}\n\n"
+        "Are you satisfied with this output? Please answer 'yes' or 'no'. "
+        "If 'no', please provide specific feedback for improvement."
+    )
+)
+
+# Dependency Determination Agent
+dependency_agent = LlmAgent(
+    name="DependencyAgent",
+    model="gemini-2.0-flash",
+    description="Determines dependencies between user stories.",
+    instruction=(
+        "Given a list of user stories, identify dependencies between them. "
+        "Output the dependencies as pairs of user story indices or titles indicating which story depends on which."
+    )
+)
+
+# Scheduling Agent - creates a schedule of user story execution in different PI iterations
+scheduling_agent = LlmAgent(
+    name="SchedulingAgent",
+    model="gemini-2.0-flash",
+    description=(
+        "Given user stories and their dependencies, create a schedule for executing "
+        "the user stories across multiple iterations of a Program Increment (PI). "
+        "Ensure dependencies are respected and balance workload across iterations."
+    ),
+    instruction=(
+        "You are an Agile assistant. Based on the provided user stories and their dependencies, "
+        "create a schedule mapping each user story to a PI iteration number, "
+        "ensuring no user story is scheduled before its dependencies are completed."
+    )
+)
+
+class AgileProjectAssistant(SequentialAgent):
+    def __init__(self, name):
+        super().__init__(
+            name=name,
+            sub_agents=[
+                epic_agent,
+                user_story_agent,
+                validation_agent,
+                dependency_agent,
+                scheduling_agent,
+            ],
+        )
+        self.project_description = None
+        self.epic_title = None
+        self.user_stories = None
+        self.dependencies = None
+        self.schedule = None
+
+    async def run(self, input_text):
+        self.project_description = input_text
+
+        # Step 1: Generate Epic Title
+        self.epic_title = await epic_agent.run(self.project_description)
+
+        # Step 2: Generate User Stories (initially no feedback)
+        self.user_stories = await user_story_agent.run(f"Epic: {self.epic_title}\nFeedback: None")
+
+        # Human-in-the-loop validation and feedback loop
+        while True:
+            validation_prompt = (
+                f"Epic Title:\n{self.epic_title}\n\n"
+                f"User Stories:\n{self.user_stories}\n\n"
+                "Are you satisfied with this output? Please answer 'yes' or 'no'. "
+                "If 'no', please provide specific feedback."
+            )
+            validation_response = await validation_agent.run(validation_prompt)
+
+            response_lower = validation_response.lower()
+            if "yes" in response_lower:
+                break  # Proceed to next steps
+            else:
+                feedback = validation_response.lower().replace("no", "", 1).strip()
+                if not feedback:
+                    feedback = "No specific feedback provided."
+                user_story_input = f"Epic: {self.epic_title}\nFeedback: {feedback}"
+                self.user_stories = await user_story_agent.run(user_story_input)
+
+        # Step 3: Determine dependencies between user stories
+        dependency_prompt = f"User Stories:\n{self.user_stories}\n\nIdentify dependencies."
+        self.dependencies = await dependency_agent.run(dependency_prompt)
+
+        # Step 4: Create schedule of execution across PI iterations
+        scheduling_prompt = (
+            f"User Stories:\n{self.user_stories}\n\n"
+            f"Dependencies:\n{self.dependencies}\n\n"
+            "Create a schedule mapping each user story to a PI iteration number."
+        )
+        self.schedule = await scheduling_agent.run(scheduling_prompt)
+
+        # Return all results
+        return {
+            "epic_title": self.epic_title,
+            "user_stories": self.user_stories,
+            "dependencies": self.dependencies,
+            "schedule": self.schedule,
+            "validation": "Approved by human",
+        }
+
+# Example usage (async context required)
+async def main():
+    assistant = AgileProjectAssistant(name="AgileProjectAssistant")
+    project_desc = "Develop a mobile app for fitness tracking with social sharing features."
+    result = await assistant.run(project_desc)
+    print("Epic Title:\n", result["epic_title"])
+    print("\nUser Stories:\n", result["user_stories"])
+    print("\nDependencies:\n", result["dependencies"])
+    print("\nSchedule:\n", result["schedule"])
+    print("\nValidation Status:\n", result["validation"])
+
+# To run:
+# import asyncio
+# asyncio.run(main())
+
+Prompt:
+
+Great, now improve the design and provide code with inputs. 
+After creating a schedule of PI execution, you need to allocate user stories to agile team resources. In initial inputs of agent, aside from project details, you will provided input of agile team members details with name, job title, skills and availability percentage in PI( like 50 %, 80%, 100%).
+To allocate user stories you need to check agile team member job title and skills. If they user stories requires resources that are not available in team, you just tag of  new resources need with skills required.
+
+After that you add stage of asking for humsn in loop feedback. If humans not satisfied with planning and allocation of resources due to some risks like holiday planning, you ask for feeback and improve planning and resources allocation.
+
+In end  you need to provide a Gantt chart with X axis of timeline( pi iteration & week number ) and Y axis of user stories with marking of group under epic title and with color of user stories on resources name who will perform activity.
+
+You need to also output a agile project planning pdf document with following content:
+1. summary of project details and agile team member
+2. Epic stories with linked user stories  
+3. Summary of logic to tasks allocation to agile team members and spcial mention of any additional resources requirement
+4. Gantt chart of planning
+5. Overall summary of agile project planning highlighting any important points for product manager and scrum master
+
+Design
+
+Output :
+
+import asyncio
+from google.adk.agents import LlmAgent, SequentialAgent
+from matplotlib import pyplot as plt
+import matplotlib.patches as mpatches
+import pandas as pd
+import pdfkit  # For PDF generation from HTML (requires wkhtmltopdf installed)
+import tempfile
+import os
+
+# --- Define Agents ---
+
+epic_agent = LlmAgent(
+    name="EpicGenerator",
+    model="gemini-2.0-flash",
+    description="Generate a concise epic title from the project description.",
+    instruction=(
+        "You are an Agile assistant. Given a project description, generate a concise, clear, and compelling epic title."
+    )
+)
+
+user_story_agent = LlmAgent(
+    name="UserStoryGenerator",
+    model="gemini-2.0-flash",
+    description="Generate user stories from epic title and optional feedback.",
+    instruction=(
+        "You are an Agile assistant. Given an epic title and optional feedback, generate detailed user stories "
+        "in the format: 'As a [role], I want [feature] so that [benefit].' Incorporate feedback to improve."
+    )
+)
+
+validation_agent = LlmAgent(
+    name="ValidationAgent",
+    model="gemini-2.0-flash",
+    description="Ask human to validate epic and user stories and collect feedback if not satisfied.",
+    instruction=(
+        "Present the epic and user stories. Ask if the user is satisfied. If no, ask for specific feedback."
+    )
+)
+
+dependency_agent = LlmAgent(
+    name="DependencyAgent",
+    model="gemini-2.0-flash",
+    description="Identify dependencies between user stories.",
+    instruction=(
+        "Given user stories, identify dependencies as pairs indicating which story depends on which."
+    )
+)
+
+scheduling_agent = LlmAgent(
+    name="SchedulingAgent",
+    model="gemini-2.0-flash",
+    description="Create a schedule of user story execution across PI iterations respecting dependencies.",
+    instruction=(
+        "Given user stories and dependencies, create a schedule mapping each story to a PI iteration number, "
+        "ensuring dependencies are respected and workload balanced."
+    )
+)
+
+resource_allocation_agent = LlmAgent(
+    name="ResourceAllocationAgent",
+    model="gemini-2.0-flash",
+    description="Allocate user stories to agile team members based on job title, skills, and availability.",
+    instruction=(
+        "Given user stories, team member details (name, job title, skills, availability%), and schedule, "
+        "allocate stories to members matching required skills and availability. "
+        "If skills missing in team, tag new resource needs."
+    )
+)
+
+plan_validation_agent = LlmAgent(
+    name="PlanValidationAgent",
+    model="gemini-2.0-flash",
+    description="Ask human to validate the planning and resource allocation, collect feedback if not satisfied.",
+    instruction=(
+        "Present the schedule and resource allocation. Ask if the user is satisfied. "
+        "If no, collect feedback for improvement."
+    )
+)
+
+# --- Helper functions for visualization and PDF generation ---
+
+def generate_gantt_chart(schedule, user_stories, allocations, output_path="gantt_chart.png"):
+    """
+    schedule: dict mapping user story to iteration number
+    user_stories: list of user story strings
+    allocations: dict mapping user story to resource name
+    """
+    # Prepare data for plotting
+    # For simplicity, assume each PI iteration = 2 weeks, 3 iterations total
+    iteration_weeks = 2
+    iterations = max(schedule.values())
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    yticks = []
+    yticklabels = []
+    colors = {}
+    color_map = plt.cm.get_cmap('tab20')
+    resource_names = list(set(allocations.values()))
+    resource_color_map = {name: color_map(i) for i, name in enumerate(resource_names)}
+
+    for i, story in enumerate(user_stories):
+        iter_num = schedule.get(story, 1)
+        start_week = (iter_num - 1) * iteration_weeks + 1
+        duration = iteration_weeks  # assume 2 weeks per story for visualization
+        color = resource_color_map.get(allocations.get(story, "Unassigned"), (0.5, 0.5, 0.5))
+
+        ax.barh(i, duration, left=start_week, color=color, edgecolor='black')
+        yticks.append(i)
+        yticklabels.append(story[:50] + ("..." if len(story) > 50 else ""))
+
+    ax.set_yticks(yticks)
+    ax.set_yticklabels(yticklabels)
+    ax.set_xlabel("PI Iteration & Week Number")
+    ax.set_ylabel("User Stories")
+    ax.set_title("Agile Project Planning Gantt Chart")
+
+    # X-axis labels as iteration and week
+    xticks = []
+    xticklabels = []
+    total_weeks = iteration_weeks * iterations
+    for week in range(1, total_weeks + 1):
+        xticks.append(week)
+        iter_label = (week - 1) // iteration_weeks + 1
+        wk_label = ((week - 1) % iteration_weeks) + 1
+        xticklabels.append(f"PI{iter_label}-W{wk_label}")
+    ax.set_xticks(xticks)
+    ax.set_xticklabels(xticklabels, rotation=45)
+
+    # Legend by resource
+    patches = [mpatches.Patch(color=clr, label=nm) for nm, clr in resource_color_map.items()]
+    ax.legend(handles=patches, title="Resources")
+
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+    return output_path
+
+def generate_pdf_report(
+    project_desc, team_members, epic_title, user_stories,
+    dependencies, schedule, allocations, new_resources, gantt_chart_path,
+    output_pdf_path="agile_project_plan.pdf"
+):
+    """
+    Generate a PDF report summarizing the Agile project plan.
+    """
+    # Create HTML content for PDF
+    html = f"""
+    <html>
+    <head><title>Agile Project Planning Report</title></head>
+    <body>
+    <h1>Agile Project Planning Report</h1>
+
+    <h2>1. Project Summary</h2>
+    <p>{project_desc}</p>
+
+    <h3>Agile Team Members</h3>
+    <ul>
+    """
+    for member in team_members:
+        html += f"<li><b>{member['name']}</b> - {member['job_title']}, Skills: {', '.join(member['skills'])}, Availability: {member['availability']}%</li>"
+    html += "</ul>"
+
+    html += f"""
+    <h2>2. Epic and User Stories</h2>
+    <h3>Epic Title</h3>
+    <p>{epic_title}</p>
+    <h3>User Stories</h3>
+    <ul>
+    """
+    for us in user_stories:
+        html += f"<li>{us}</li>"
+    html += "</ul>"
+
+    html += f"""
+    <h2>3. Dependencies</h2>
+    <pre>{dependencies}</pre>
+
+    <h2>4. Schedule and Resource Allocation</h2>
+    <table border="1" cellpadding="5" cellspacing="0">
+    <tr><th>User Story</th><th>PI Iteration</th><th>Assigned Resource</th></tr>
+    """
+    for us in user_stories:
+        iter_num = schedule.get(us, "N/A")
+        resource = allocations.get(us, "Unassigned")
+        html += f"<tr><td>{us}</td><td>{iter_num}</td><td>{resource}</td></tr>"
+    html += "</table>"
+
+    if new_resources:
+        html += "<h3>Additional Resource Needs</h3><ul>"
+        for skill in new_resources:
+            html += f"<li>Need resource with skill: {skill}</li>"
+        html += "</ul>"
+
+    html += f"""
+    <h2>5. Gantt Chart</h2>
+    <img src="{gantt_chart_path}" alt="Gantt Chart" style="width:100%;max-width:900px;"/>
+
+    <h2>6. Summary for Product Manager and Scrum Master</h2>
+    <p>The planning respects dependencies and balances workload across PI iterations. Resource allocation is optimized based on skills and availability. Additional resource needs have been identified for missing skills. Please review holiday schedules and other risks to finalize the plan.</p>
+
+    </body>
+    </html>
+    """
+
+    # Generate PDF using pdfkit
+    pdfkit.from_string(html, output_pdf_path)
+    return output_pdf_path
+
+# --- Main Assistant Agent ---
+
+class AgileProjectAssistant(SequentialAgent):
+    def __init__(self, name):
+        super().__init__(
+            name=name,
+            sub_agents=[
+                epic_agent,
+                user_story_agent,
+                validation_agent,
+                dependency_agent,
+                scheduling_agent,
+                resource_allocation_agent,
+                plan_validation_agent,
+            ],
+        )
+        self.project_description = None
+        self.team_members = None
+        self.epic_title = None
+        self.user_stories = None
+        self.dependencies = None
+        self.schedule = None
+        self.allocations = None
+        self.new_resources = None
+
+    async def run(self, project_description, team_members):
+        self.project_description = project_description
+        self.team_members = team_members
+
+        # Step 1: Generate Epic Title
+        self.epic_title = await epic_agent.run(self.project_description)
+
+        # Step 2: Generate User Stories (initially no feedback)
+        self.user_stories = await user_story_agent.run(f"Epic: {self.epic_title}\nFeedback: None")
+
+        # Step 3: Human validation of epic & user stories
+        while True:
+            validation_prompt = (
+                f"Epic Title:\n{self.epic_title}\n\n"
+                f"User Stories:\n{self.user_stories}\n\n"
+                "Are you satisfied with this output? Please answer 'yes' or 'no'. "
+                "If 'no', please provide specific feedback."
+            )
+            validation_response = await validation_agent.run(validation_prompt)
+
+            if "yes" in validation_response.lower():
+                break
+            else:
+                feedback = validation_response.lower().replace("no", "", 1).strip()
+                if not feedback:
+                    feedback = "No specific feedback provided."
+                self.user_stories = await user_story_agent.run(f"Epic: {self.epic_title}\nFeedback: {feedback}")
+
+        # Step 4: Determine dependencies
+        dependency_prompt = f"User Stories:\n{self.user_stories}\n\nIdentify dependencies."
+        self.dependencies = await dependency_agent.run(dependency_prompt)
+
+        # Step 5: Scheduling user stories across PI iterations
+        scheduling_prompt = (
+            f"User Stories:\n{self.user_stories}\n\n"
+            f"Dependencies:\n{self.dependencies}\n\n"
+            "Create a schedule mapping each user story to a PI iteration number."
+        )
+        schedule_str = await scheduling_agent.run(scheduling_prompt)
+
+        # Parse schedule string into dictionary (assume a simple format: "User Story" -> Iteration)
+        # This parsing depends on the agent output format; here we simulate a simple parse:
+        self.schedule = self._parse_schedule(schedule_str, self.user_stories)
+
+        # Step 6: Allocate resources
+        team_str = self._format_team_members(self.team_members)
+        allocation_prompt = (
+            f"User Stories:\n{self.user_stories}\n\n"
+            f"Schedule:\n{schedule_str}\n\n"
+            f"Team Members:\n{team_str}\n\n"
+            "Allocate user stories to team members based on skills, job title, and availability. "
+            "Tag any new resource needs."
+        )
+        allocation_response = await resource_allocation_agent.run(allocation_prompt)
+
+        # Parse allocations and new resource needs from response
+        self.allocations, self.new_resources = self._parse_allocation(allocation_response)
+
+        # Step 7: Human validation of plan and allocation
+        while True:
+            plan_validation_prompt = (
+                f"Schedule:\n{schedule_str}\n\n"
+                f"Resource Allocation:\n{allocation_response}\n\n"
+                "Are you satisfied with the planning and resource allocation? Please answer 'yes' or 'no'. "
+                "If 'no', please provide specific feedback."
+            )
+            plan_validation_response = await plan_validation_agent.run(plan_validation_prompt)
+
+            if "yes" in plan_validation_response.lower():
+                break
+            else:
+                feedback = plan_validation_response.lower().replace("no", "", 1).strip()
+                if not feedback:
+                    feedback = "No specific feedback provided."
+                # Re-run scheduling and allocation with feedback
+                scheduling_prompt = (
+                    f"User Stories:\n{self.user_stories}\n\n"
+                    f"Dependencies:\n{self.dependencies}\n\n"
+                    f"Feedback:\n{feedback}\n\n"
+                    "Create a revised schedule mapping each user story to a PI iteration number."
+                )
+                schedule_str = await scheduling_agent.run(scheduling_prompt)
+                self.schedule = self._parse_schedule(schedule_str, self.user_stories)
+
+                allocation_prompt = (
+                    f"User Stories:\n{self.user_stories}\n\n"
+                    f"Schedule:\n{schedule_str}\n\n"
+                    f"Team Members:\n{team_str}\n\n"
+                    f"Feedback:\n{feedback}\n\n"
+                    "Allocate user stories to team members based on skills, job title, and availability. "
+                    "Tag any new resource needs."
+                )
+                allocation_response = await resource_allocation_agent.run(allocation_prompt)
+                self.allocations, self.new_resources = self._parse_allocation(allocation_response)
+
+        # Step 8: Generate Gantt chart
+        gantt_path = generate_gantt_chart(self.schedule, self.user_stories, self.allocations)
+
+        # Step 9: Generate PDF report
+        pdf_path = generate_pdf_report(
+            self.project_description, self.team_members, self.epic_title,
+            self.user_stories, self.dependencies, self.schedule,
+            self.allocations, self.new_resources, gantt_path
+        )
+
+        return {
+            "epic_title": self.epic_title,
+            "user_stories": self.user_stories,
+            "dependencies": self.dependencies,
+            "schedule": self.schedule,
+            "allocations": self.allocations,
+            "new_resources": self.new_resources,
+            "gantt_chart_path": gantt_path,
+            "pdf_report_path": pdf_path,
+        }
+
+    def _parse_schedule(self, schedule_str, user_stories):
+        """
+        Parses the schedule string returned by scheduling agent into a dict:
+        {user_story: iteration_number}
+        This is a simple heuristic parser and may need adjustment based on actual output format.
+        """
+        schedule = {}
+        for us in user_stories:
+            # Try to find iteration number for this user story in the string
+            # Expect format: "User Story: Iteration X"
+            # For demo, assign iteration 1 if not found
+            iter_num = 1
+            lines = schedule_str.splitlines()
+            for line in lines:
+                if us[:30] in line:
+                    # Extract iteration number from line
+                    import re
+                    match = re.search(r"iteration\s*(\d+)", line.lower())
+                    if match:
+                        iter_num = int(match.group(1))
+                        break
+            schedule[us] = iter_num
+        return schedule
+
+    def _format_team_members(self, team_members):
+        """
+        Formats team member list into a string for prompting.
+        """
+        lines = []
+        for m in team_members:
+            skills = ", ".join(m.get("skills", []))
+            lines.append(f"{m['name']} ({m['job_title']}), Skills: {skills}, Availability: {m['availability']}%")
+        return "\n".join(lines)
+
+    def _parse_allocation(self, allocation_response):
+        """
+        Parses allocation agent response into:
+        - allocations dict {user_story: resource_name}
+        - new_resources list of skills needed
+        This is a heuristic parser and may need adjustment based on actual output format.
+        """
+        allocations = {}
+        new_resources = []
+        lines = allocation_response.splitlines()
+        for line in lines:
+            line_lower = line.lower()
+            if "allocate" in line_lower and ":" in line:
+                # Expected format: User Story: Resource Name
+                parts = line.split(":")
+                if len(parts) >= 2:
+                    us = parts[0].strip()
+                    res = parts[1].strip()
+                    allocations[us] = res
+            elif "need resource" in line_lower or "new resource" in line_lower:
+                # Extract skill mention
+                import re
+                match = re.search(r"skill[s]* required: (.+)", line_lower)
+                if match:
+                    skills = match.group(1).split(",")
+                    new_resources.extend([s.strip() for s in skills])
+        return allocations, new_resources
+
+# --- Example Input and Running the Assistant ---
+
+async def main():
+    project_description = (
+        "Develop a mobile app for fitness tracking with social sharing features, "
+        "including step counting, workout logging, and friend challenges."
+    )
+
+    agile_team_members = [
+        {
+            "name": "Alice",
+            "job_title": "Frontend Developer",
+            "skills": ["React Native", "UI/UX", "Mobile Development"],
+            "availability": 80,
+        },
+        {
+            "name": "Bob",
+            "job_title": "Backend Developer",
+            "skills": ["Python", "Django", "API Development"],
+            "availability": 100,
+        },
+        {
+            "name": "Charlie",
+            "job_title": "QA Engineer",
+            "skills": ["Automated Testing", "Manual Testing", "Selenium"],
+            "availability": 50,
+        },
+        {
+            "name": "Dana",
+            "job_title": "DevOps Engineer",
+            "skills": ["AWS", "CI/CD", "Docker"],
+            "availability": 60,
+        },
+    ]
+
+    assistant = AgileProjectAssistant(name="AgileProjectAssistant")
+    result = await assistant.run(project_description, agile_team_members)
+
+    print("Epic Title:\n", result["epic_title"])
+    print("\nUser Stories:\n", result["user_stories"])
+    print("\nDependencies:\n", result["dependencies"])
+    print("\nSchedule:\n", result["schedule"])
+    print("\nResource Allocations:\n", result["allocations"])
+    print("\nNew Resource Needs:\n", result["new_resources"])
+    print("\nGantt Chart Path:\n", result["gantt_chart_path"])
+    print("\nPDF Report Path:\n", result["pdf_report_path"])
+
+if __name__ == "__main__":
+    asyncio.run(main())
